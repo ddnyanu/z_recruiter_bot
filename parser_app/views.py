@@ -114,24 +114,29 @@ from .services.ai_extractor import regenerate_resume_summary
 from parser_app.utils.token_limiter import truncate_text
 
 class RegenerateSummaryAPIView(APIView):
-    parser_classes = [JSONParser]  # Accept JSON input
+    parser_classes = [JSONParser]
 
     def post(self, request):
-        resume_text = request.data.get('resume_text')
         summary_type = request.data.get('type')  # 'resume' or 'work'
 
-        if not resume_text or summary_type not in ['resume', 'work']:
-            return Response({"error": "Missing resume_text or invalid summary type"}, status=400)
+        # Dynamically pick the right field
+        if summary_type == 'resume':
+            input_text = request.data.get('resume_summary')
+        elif summary_type == 'work':
+            input_text = request.data.get('work_summary')
+        else:
+            return Response({"error": "Invalid summary type"}, status=400)
 
-        # Truncate the text (if needed)
-        trimmed_text = truncate_text(resume_text)
+        if not input_text:
+            return Response({"error": f"{summary_type}_summary is required"}, status=400)
 
-        # Generate new summary
-        new_summary = regenerate_resume_summary(trimmed_text, summary_type)
+        trimmed_text = truncate_text(input_text)
+
+        regenerated = regenerate_resume_summary(trimmed_text, summary_type)
 
         return Response({
             "type": summary_type,
-            "regenerated_summary": new_summary
+            "regenerated_summary": regenerated
         })
 
 
