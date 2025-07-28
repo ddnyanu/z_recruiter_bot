@@ -1,50 +1,50 @@
 # parser_app/utils/semantic_field_extractor.py
 
-from transformers import AutoTokenizer, AutoModel
+import os
+from openai import OpenAI
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.functional import cosine_similarity
 
-# Load lightweight transformer model
-tokenizer = AutoTokenizer.from_pretrained("prajjwal1/bert-tiny")
-model = AutoModel.from_pretrained("prajjwal1/bert-tiny")
+from decouple import config
 
-# Define semantic mappings for fallback fields
+client = OpenAI(api_key=config("OPENAI_API_KEY"))
+
+# Define alternate ways the fields can be written
 semantic_field_map = {
     "date_of_birth": ["date of birth", "dob", "d.o.b", "birth date", "born on"],
     "residential_address": ["address", "permanent address", "current location", "residence", "home address"],
     "contact_number": ["contact number", "mobile", "phone", "telephone", "cell number"]
 }
 
-def get_embedding(text):
-    """Generate a normalized mean pooled embedding for a given text."""
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    embeddings = outputs.last_hidden_state.mean(dim=1)
-    return F.normalize(embeddings, p=2, dim=1)
+def get_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text.strip()
+    )
+    return response.data[0].embedding
 
 def extract_semantic_field(raw_text: str, field: str) -> str:
-    """Extract the best matching line for a given field using semantic similarity."""
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
-    if not lines or field not in semantic_field_map:
+    if not lines:
         return ""
 
-    line_embeddings = torch.cat([get_embedding(line) for line in lines], dim=0)
+    line_embeddings = [get_embedding(line) for line in lines]
+    target_phrases = semantic_field_map.get(field, [])
+    target_embeddings = [get_embedding(phrase) for phrase in target_phrases]
 
+    best_score = -1.0
     best_line = ""
-    highest_score = -1.0
 
-    for target in semantic_field_map[field]:
-        target_embedding = get_embedding(target)
-        # Compute cosine similarity with all lines
-        similarities = cosine_similarity(target_embedding, line_embeddings).squeeze(0)
+    for target_emb in target_embeddings:
+        for i, line_emb in enumerate(line_embeddings):
+            score = F.cosine_similarity(
+                torch.tensor(target_emb).unsqueeze(0),
+                torch.tensor(line_emb).unsqueeze(0)
+            ).item()
 
-        max_idx = similarities.argmax().item()
-        max_score = similarities[max_idx].item()
-
-        if max_score > highest_score:
-            highest_score = max_score
-            best_line = lines[max_idx]
+            if score > best_score:
+                best_score = score
+                best_line = lines[i]
 
     return best_line
