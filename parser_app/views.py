@@ -9,7 +9,8 @@ from parser_app.utils.gender_utils import get_final_gender
 from parser_app.utils.token_limiter import truncate_text
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
-
+from parser_app.utils.extractors import extract_by_keywords, extract_date
+from parser_app.utils.semantic_field_extractor import extract_semantic_field
 
 class ResumeParserAPIView(APIView):
     parser_classes = [MultiPartParser]
@@ -22,6 +23,8 @@ class ResumeParserAPIView(APIView):
         # Step 1: Extract raw text
         file.seek(0)
         raw_text = extract_text_from_pdf(file)
+        print("📄 Extracted Resume Text:\n", raw_text)
+
 
         # Step 2: Extract profile image
         file.seek(0)
@@ -45,6 +48,32 @@ class ResumeParserAPIView(APIView):
             parsed_data["work_summary_generated"] = True
         else:
             parsed_data["work_summary_generated"] = False
+
+  # Make sure you create these!
+
+        # Define fallback fields with common synonyms
+        fallback_fields = {
+            "date_of_birth": ["dob", "birth date", "date of birth", "d.o.b"],
+            "residential_address": ["address", "permanent address", "current address", "location"]
+        }
+
+        # Apply fallbacks if field is missing
+        for field, keywords in fallback_fields.items():
+            if not parsed_data.get(field):
+                extracted_value = extract_by_keywords(trimmed_text, keywords)
+                if field == "date_of_birth":
+                    parsed_data[field] = extract_date(extracted_value)
+                else:
+                    parsed_data[field] = extracted_value
+                
+                    # If still not found, try semantic similarity
+                if not parsed_data.get(field):
+                    semantic_value = extract_semantic_field(trimmed_text, field)
+                    if field == "date_of_birth":
+                        parsed_data[field] = extract_date(semantic_value)
+                    else:
+                        parsed_data[field] = semantic_value
+
 
         # Step 6: Enrich the parsed data
         enriched_data = enrich_resume_data(parsed_data, trimmed_text)
@@ -76,44 +105,34 @@ class ResumeParserAPIView(APIView):
 
 
 # views.py
+# views.py
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.parsers import JSONParser
 from .services.ai_extractor import regenerate_resume_summary
 from parser_app.utils.token_limiter import truncate_text
-from rest_framework.parsers import MultiPartParser
 
 class RegenerateSummaryAPIView(APIView):
-    parser_classes = [MultiPartParser]
+    parser_classes = [JSONParser]  # Accept JSON input
 
     def post(self, request):
-        file = request.FILES.get('resume')
+        resume_text = request.data.get('resume_text')
         summary_type = request.data.get('type')  # 'resume' or 'work'
 
-        if not file or summary_type not in ['resume', 'work']:
-            return Response({"error": "Missing resume or type"}, status=400)
+        if not resume_text or summary_type not in ['resume', 'work']:
+            return Response({"error": "Missing resume_text or invalid summary type"}, status=400)
 
-        # Extract and truncate text
-        file.seek(0)
-        raw_text = file.read().decode('latin1') if isinstance(file.read(), bytes) else file.read()
-        trimmed_text = truncate_text(raw_text)
+        # Truncate the text (if needed)
+        trimmed_text = truncate_text(resume_text)
 
-        # Regenerate summary
+        # Generate new summary
         new_summary = regenerate_resume_summary(trimmed_text, summary_type)
 
         return Response({
             "type": summary_type,
             "regenerated_summary": new_summary
         })
-
-
-
-
-
-
-
-
-
 
 
 
